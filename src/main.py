@@ -1,6 +1,6 @@
 import tkinter as tk
 from tkinter import ttk
-from models.database_manager import DatabaseManager
+from models.database_utils import DatabaseManager
 from ui.styles import configure_styles
 from ui.tabs.patients_tab import PatientsTab
 from ui.tabs.doctors_tab import DoctorsTab
@@ -54,8 +54,8 @@ class HospitalManagementSystem:
                                        foreground='#7f8c8d')
         self.subtitle_label.grid(row=1, column=0, pady=(0,20))
         
-        # Initialize database manager
-        self.db_manager = DatabaseManager()
+        # Initialize database manager (debug mode disabled by default)
+        self.db_manager = DatabaseManager(debug_mode=False)
         
         # Configure modern styles
         configure_styles()

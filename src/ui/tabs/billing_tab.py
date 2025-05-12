@@ -1,6 +1,6 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
-from datetime import datetime
+from datetime import datetime, timedelta
 
 class BillingTab:
     def __init__(self, parent, db_manager):
@@ -72,7 +72,7 @@ class BillingTab:
         tree_container.grid_columnconfigure(0, weight=1)
         
         self.tree = ttk.Treeview(tree_container,
-                                columns=('ID', 'Patient', 'Amount', 'Date', 'Status'),
+                                columns=('ID', 'Patient', 'Amount', 'Status', 'IssueDate', 'DueDate', 'PaymentDate'),
                                 show='headings')
         
         # Add scrollbars
@@ -90,16 +90,20 @@ class BillingTab:
         self.tree.heading('ID', text='ID')
         self.tree.heading('Patient', text='Patient')
         self.tree.heading('Amount', text='Amount')
-        self.tree.heading('Date', text='Date')
         self.tree.heading('Status', text='Status')
+        self.tree.heading('IssueDate', text='Issue Date')
+        self.tree.heading('DueDate', text='Due Date')
+        self.tree.heading('PaymentDate', text='Payment Date')
         
         # Set column weights
         total_width = tree_container.winfo_width()
         self.tree.column('ID', width=int(total_width * 0.1), minwidth=50)
-        self.tree.column('Patient', width=int(total_width * 0.3), minwidth=100)
-        self.tree.column('Amount', width=int(total_width * 0.2), minwidth=80)
-        self.tree.column('Date', width=int(total_width * 0.2), minwidth=80)
-        self.tree.column('Status', width=int(total_width * 0.2), minwidth=80)
+        self.tree.column('Patient', width=int(total_width * 0.2), minwidth=100)
+        self.tree.column('Amount', width=int(total_width * 0.1), minwidth=80)
+        self.tree.column('Status', width=int(total_width * 0.1), minwidth=80)
+        self.tree.column('IssueDate', width=int(total_width * 0.15), minwidth=80)
+        self.tree.column('DueDate', width=int(total_width * 0.15), minwidth=80)
+        self.tree.column('PaymentDate', width=int(total_width * 0.15), minwidth=80)
         
         # Bind select event
         self.tree.bind('<<TreeviewSelect>>', self.on_select)
@@ -199,11 +203,16 @@ class BillingTab:
         except ValueError:
             messagebox.showerror("Error", "Amount must be a valid number!")
             return
+        
+        # Set issue_date to today and due_date to 30 days from today
+        today = datetime.now().date()
+        issue_date = today.strftime('%Y-%m-%d')
+        due_date = (today + timedelta(days=30)).strftime('%Y-%m-%d')
             
         query = """INSERT INTO invoices 
-                   (patient_id, appointment_id, amount, payment_status, payment_date)
-                   VALUES (%s, %s, %s, %s, NULLIF(%s, ''))"""
-        params = (patient_id, appointment_id, amount, status, payment_date if payment_date else '')
+                   (patient_id, appointment_id, amount, payment_status, issue_date, due_date, payment_date)
+                   VALUES (%s, %s, %s, %s, %s, %s, NULLIF(%s, ''))"""
+        params = (patient_id, appointment_id, amount, status, issue_date, due_date, payment_date if payment_date else '')
         
         result = self.db_manager.execute_query('billing_db', query, params)
         if result:
@@ -237,11 +246,21 @@ class BillingTab:
             messagebox.showerror("Error", "Amount must be a valid number!")
             return
             
+        # Get the current invoice data to preserve issue_date and due_date
+        get_invoice_query = "SELECT issue_date, due_date FROM invoices WHERE invoice_id = %s"
+        invoice_data = self.db_manager.execute_query('billing_db', get_invoice_query, (invoice_id,))
+        
+        if not invoice_data:
+            messagebox.showerror("Error", "Could not retrieve invoice data!")
+            return
+            
+        issue_date, due_date = invoice_data[0]
+        
         query = """UPDATE invoices 
                    SET patient_id = %s, appointment_id = %s, amount = %s,
-                       payment_status = %s, payment_date = NULLIF(%s, '')
+                       payment_status = %s, issue_date = %s, due_date = %s, payment_date = NULLIF(%s, '')
                    WHERE invoice_id = %s"""
-        params = (patient_id, appointment_id, amount, status, payment_date if payment_date else '', invoice_id)
+        params = (patient_id, appointment_id, amount, status, issue_date, due_date, payment_date if payment_date else '', invoice_id)
         
         result = self.db_manager.execute_query('billing_db', query, params)
         if result is not None:
@@ -294,6 +313,8 @@ class BillingTab:
             SELECT i.invoice_id, 
                    CONCAT(p.first_name, ' ', p.last_name) as patient_name,
                    i.amount, i.payment_status, 
+                   DATE_FORMAT(i.issue_date, '%Y-%m-%d') as issue_date,
+                   DATE_FORMAT(i.due_date, '%Y-%m-%d') as due_date,
                    DATE_FORMAT(i.payment_date, '%Y-%m-%d') as payment_date
             FROM invoices i
             JOIN patients_db.patients p ON i.patient_id = p.patient_id
@@ -309,7 +330,9 @@ class BillingTab:
         # Adjust column widths based on container width
         width = event.width
         self.tree.column('ID', width=int(width * 0.1), minwidth=50)
-        self.tree.column('Patient', width=int(width * 0.3), minwidth=100)
-        self.tree.column('Amount', width=int(width * 0.2), minwidth=80)
-        self.tree.column('Date', width=int(width * 0.2), minwidth=80)
-        self.tree.column('Status', width=int(width * 0.2), minwidth=80)
+        self.tree.column('Patient', width=int(width * 0.2), minwidth=100)
+        self.tree.column('Amount', width=int(width * 0.1), minwidth=80)
+        self.tree.column('Status', width=int(width * 0.1), minwidth=80)
+        self.tree.column('IssueDate', width=int(width * 0.15), minwidth=80)
+        self.tree.column('DueDate', width=int(width * 0.15), minwidth=80)
+        self.tree.column('PaymentDate', width=int(width * 0.15), minwidth=80)

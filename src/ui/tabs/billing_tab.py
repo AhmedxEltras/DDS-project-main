@@ -123,28 +123,51 @@ class BillingTab:
         self.refresh_appointments()
 
     def refresh_appointments(self, patient_id=None):
+        # Get appointments
         if patient_id:
             query = """
-                SELECT appointment_id, appointment_date, appointment_time 
-                FROM appointments 
-                WHERE patient_id = %s
-                ORDER BY appointment_date DESC, appointment_time DESC
+                SELECT a.appointment_id, a.appointment_date, a.appointment_time, a.doctor_id
+                FROM appointments a
+                WHERE a.patient_id = %s
+                ORDER BY a.appointment_date DESC, a.appointment_time DESC
             """
             results = self.db_manager.execute_query('appointments_db', query, (patient_id,))
         else:
             query = """
-                SELECT appointment_id, appointment_date, appointment_time 
-                FROM appointments
-                ORDER BY appointment_date DESC, appointment_time DESC
+                SELECT a.appointment_id, a.appointment_date, a.appointment_time, a.doctor_id
+                FROM appointments a
+                ORDER BY a.appointment_date DESC, a.appointment_time DESC
             """
             results = self.db_manager.execute_query('appointments_db', query)
+        
+        if not results:
+            self.appointment_combo['values'] = []
+            self.appointments = {}
+            return
             
-        if results:
-            self.appointments = {
-                f"{date} {time}": aid 
-                for aid, date, time in results
-            }
-            self.appointment_combo['values'] = list(self.appointments.keys())
+        # Get doctor information
+        doctor_ids = [result[3] for result in results]
+        if doctor_ids:
+            placeholders = ', '.join(['%s'] * len(doctor_ids))
+            query_doctors = f"SELECT doctor_id, first_name, last_name FROM doctors WHERE doctor_id IN ({placeholders})"
+            doctors_result = self.db_manager.execute_query('appointments_db', query_doctors, doctor_ids)
+            doctors = {d[0]: f"{d[1]} {d[2]}" for d in doctors_result} if doctors_result else {}
+        else:
+            doctors = {}
+            
+        # Format appointments with doctor names
+        self.appointments = {}
+        appointment_values = []
+        
+        for aid, date, time, doctor_id in results:
+            doctor_name = doctors.get(doctor_id, "Unknown Doctor")
+            formatted_date = date.strftime('%Y-%m-%d') if hasattr(date, 'strftime') else date
+            formatted_time = time.strftime('%H:%M') if hasattr(time, 'strftime') else time
+            appointment_display = f"{formatted_date} {formatted_time} - {doctor_name}"
+            self.appointments[appointment_display] = aid
+            appointment_values.append(appointment_display)
+            
+        self.appointment_combo['values'] = appointment_values
 
     def clear_form(self):
         self.invoice_id.delete(0, tk.END)

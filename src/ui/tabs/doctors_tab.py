@@ -144,7 +144,7 @@ class DoctorsTab:
             messagebox.showerror("Error", "All fields are required!")
             return
             
-        query = """INSERT INTO doctors (first_name, last_name, specialization, contact_number)
+        query = """INSERT INTO doctors (first_name, last_name, specialization, phone)
                    VALUES (%s, %s, %s, %s)"""
         params = (first_name, last_name, specialization, contact)
         
@@ -168,7 +168,7 @@ class DoctorsTab:
         contact = self.contact.get()
         
         query = """UPDATE doctors 
-                   SET first_name = %s, last_name = %s, specialization = %s, contact_number = %s
+                   SET first_name = %s, last_name = %s, specialization = %s, phone = %s
                    WHERE doctor_id = %s"""
         params = (first_name, last_name, specialization, contact, doctor_id)
         
@@ -231,12 +231,19 @@ class DoctorsTab:
             self.doctor_tree.delete(item)
         
         # Get doctors from database
-        query = "SELECT * FROM doctors"
+        query = "SELECT doctor_id, first_name, last_name, specialization, phone FROM doctors"
         result = self.db_manager.execute_query('appointments_db', query)
         
         if result:
             for row in result:
-                self.doctor_tree.insert('', 'end', values=row)
+                # Format the data properly for the tree view
+                # ID, Name, Specialization, Contact
+                self.doctor_tree.insert('', 'end', values=(
+                    row[0],                  # doctor_id
+                    f"{row[1]} {row[2]}",     # first_name + last_name
+                    row[3],                  # specialization
+                    row[4]                   # phone
+                ))
     
     def on_tree_resize(self, event):
         # Adjust column widths based on container width

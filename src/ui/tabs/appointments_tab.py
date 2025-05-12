@@ -253,24 +253,52 @@ class AppointmentsTab:
         for item in self.tree.get_children():
             self.tree.delete(item)
             
-        # Fetch and display appointments
-        query = """
-            SELECT a.appointment_id, 
-                   CONCAT(p.first_name, ' ', p.last_name) as patient_name,
-                   CONCAT(d.first_name, ' ', d.last_name) as doctor_name,
+        # First get all appointments
+        query_appointments = """
+            SELECT a.appointment_id, a.patient_id, a.doctor_id,
                    DATE_FORMAT(a.appointment_date, '%Y-%m-%d') as date,
                    TIME_FORMAT(a.appointment_time, '%H:%i') as time,
                    a.status
             FROM appointments a
-            JOIN patients_db.patients p ON a.patient_id = p.patient_id
-            JOIN doctors d ON a.doctor_id = d.doctor_id
             ORDER BY a.appointment_date, a.appointment_time
         """
-        results = self.db_manager.execute_query('appointments_db', query)
+        appointments = self.db_manager.execute_query('appointments_db', query_appointments)
         
-        if results:
-            for appt in results:
-                self.tree.insert('', 'end', values=appt)
+        if not appointments:
+            return
+            
+        # Get all patients
+        query_patients = "SELECT patient_id, first_name, last_name FROM patients"
+        patients_result = self.db_manager.execute_query('patients_db', query_patients)
+        patients = {p[0]: f"{p[1]} {p[2]}" for p in patients_result} if patients_result else {}
+        
+        # Get all doctors
+        query_doctors = "SELECT doctor_id, first_name, last_name FROM doctors"
+        doctors_result = self.db_manager.execute_query('appointments_db', query_doctors)
+        doctors = {d[0]: f"{d[1]} {d[2]}" for d in doctors_result} if doctors_result else {}
+        
+        # Combine the data
+        for appt in appointments:
+            appointment_id = appt[0]
+            patient_id = appt[1]
+            doctor_id = appt[2]
+            date = appt[3]
+            time = appt[4]
+            status = appt[5]
+            
+            patient_name = patients.get(patient_id, f"Patient {patient_id}")
+            doctor_name = doctors.get(doctor_id, f"Doctor {doctor_id}")
+            
+            self.tree.insert('', 'end', values=(
+                appointment_id,
+                patient_name,
+                doctor_name,
+                date,
+                time,
+                status
+            ))
+        
+
 
     def on_tree_resize(self, event):
         # Adjust column widths based on container width

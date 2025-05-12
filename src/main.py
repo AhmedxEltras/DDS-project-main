@@ -82,8 +82,34 @@ class HospitalManagementSystem:
         self.root.bind('<Configure>', self.on_window_resize)
         
         # Auto-refresh configuration
-        self.refresh_interval = 5000  # 5 seconds
+        self.refresh_interval = 5000  # 5 seconds (default)
+        self.auto_refresh_enabled = True
         self.tab_controllers = {}
+        
+        # Create status bar for refresh indicator
+        self.status_bar = ttk.Frame(self.main_container, relief=tk.SUNKEN, padding=(5, 2))
+        self.status_bar.grid(row=2, column=0, sticky='ew', padx=20, pady=(0, 10))
+        self.status_bar.grid_columnconfigure(0, weight=1)
+        
+        # Add refresh indicator to status bar
+        self.refresh_indicator = ttk.Label(self.status_bar, text="Auto-refresh: Active", foreground="green")
+        self.refresh_indicator.grid(row=0, column=0, sticky='w')
+        
+        # Add refresh interval control
+        refresh_frame = ttk.Frame(self.status_bar)
+        refresh_frame.grid(row=0, column=1, sticky='e')
+        
+        ttk.Label(refresh_frame, text="Refresh interval (seconds):").pack(side=tk.LEFT, padx=(0, 5))
+        self.interval_var = tk.StringVar(value=str(int(self.refresh_interval/1000)))
+        self.interval_spinbox = ttk.Spinbox(refresh_frame, from_=1, to=60, width=3, 
+                                          textvariable=self.interval_var, 
+                                          command=self.update_refresh_interval)
+        self.interval_spinbox.pack(side=tk.LEFT, padx=(0, 10))
+        
+        # Add toggle button
+        self.toggle_button = ttk.Button(refresh_frame, text="Disable Auto-refresh", 
+                                      command=self.toggle_auto_refresh, width=18)
+        self.toggle_button.pack(side=tk.LEFT)
         self.notebook.add(self.doctors_tab, text="👨‍⚕️ Doctors")
         self.notebook.add(self.appointments_tab, text="📅 Appointments")
         self.notebook.add(self.billing_tab, text="💰 Billing")
@@ -121,8 +147,52 @@ class HospitalManagementSystem:
             current_controller.refresh_appointments()
     
     def schedule_refresh(self):
-        self.refresh_current_tab()
-        self.root.after(self.refresh_interval, self.schedule_refresh)
+        if self.auto_refresh_enabled:
+            self.refresh_current_tab()
+            # Update the refresh indicator with timestamp
+            current_time = self.root.after_idle(self.update_refresh_timestamp)
+            # Schedule next refresh
+            self.refresh_job = self.root.after(self.refresh_interval, self.schedule_refresh)
+    
+    def update_refresh_timestamp(self):
+        """Update the refresh indicator with current timestamp"""
+        import time
+        timestamp = time.strftime("%H:%M:%S")
+        self.refresh_indicator.config(text=f"Auto-refresh: Active (Last: {timestamp})")
+    
+    def toggle_auto_refresh(self):
+        """Toggle auto-refresh on/off"""
+        self.auto_refresh_enabled = not self.auto_refresh_enabled
+        
+        if self.auto_refresh_enabled:
+            # Enable auto-refresh
+            self.refresh_indicator.config(text="Auto-refresh: Active", foreground="green")
+            self.toggle_button.config(text="Disable Auto-refresh")
+            # Start refresh cycle
+            self.schedule_refresh()
+        else:
+            # Disable auto-refresh
+            self.refresh_indicator.config(text="Auto-refresh: Disabled", foreground="red")
+            self.toggle_button.config(text="Enable Auto-refresh")
+            # Cancel pending refresh job if exists
+            if hasattr(self, 'refresh_job'):
+                self.root.after_cancel(self.refresh_job)
+    
+    def update_refresh_interval(self):
+        """Update the refresh interval based on spinbox value"""
+        try:
+            # Get interval in seconds from spinbox and convert to milliseconds
+            new_interval = int(float(self.interval_var.get()) * 1000)
+            if new_interval >= 1000:  # Minimum 1 second
+                self.refresh_interval = new_interval
+                
+                # Restart refresh cycle with new interval if enabled
+                if self.auto_refresh_enabled and hasattr(self, 'refresh_job'):
+                    self.root.after_cancel(self.refresh_job)
+                    self.refresh_job = self.root.after(0, self.schedule_refresh)
+        except ValueError:
+            # Reset to current value if invalid input
+            self.interval_var.set(str(int(self.refresh_interval/1000)))
     
     def on_window_resize(self, event):
         # Only handle window resize events, not other configure events
@@ -213,14 +283,34 @@ def fade_in_window(window):
     increase_opacity()
 
 def main():
-    # Show loading screen
+    # Create and show loading screen
     loading_root = tk.Tk()
+    loading_root.title('Hospital Management System')
     loading_screen = LoadingScreen(loading_root)
     loading_root.mainloop()
     
     # Create main window
     root = tk.Tk()
+    root.title('Hospital Management System')
     root.withdraw()  # Hide window initially
+    
+    # Set window icon
+    try:
+        root.iconbitmap('assets/icon.ico')
+    except:
+        pass  # Icon not found, use default
+    
+    # Configure window
+    root.state('zoomed')  # Start maximized
+    root.minsize(1024, 768)  # Minimum window size
+    
+    # Configure grid
+    root.grid_rowconfigure(0, weight=1)
+    root.grid_columnconfigure(0, weight=1)
+    
+    # Set theme
+    style = ttk.Style(root)
+    style.theme_use('clam')  # Use clam theme as base
     
     # Initialize app
     app = HospitalManagementSystem(root)

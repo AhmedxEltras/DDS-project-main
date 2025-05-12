@@ -1,8 +1,23 @@
-# GUI library
-tkinter
+# Core dependencies
+Python>=3.8.0
 
-# Database library
-mysql-connector-python
+# GUI libraries
+tkinter>=8.6.0  # Usually comes with Python
+Pillow>=9.5.0  # For image handling
 
-# Additional libraries
-datetime
+# Database libraries
+mysql-connector-python>=8.0.33
+SQLAlchemy>=2.0.15  # SQL toolkit and ORM
+
+# Date and time handling
+python-dateutil>=2.8.2
+
+# Testing and development
+pytest>=7.3.1
+pytest-cov>=4.1.0
+flake8>=6.0.0
+black>=23.3.0
+
+# Documentation
+Sphinx>=7.0.1
+sphinx-rtd-theme>=1.2.0

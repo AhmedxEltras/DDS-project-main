@@ -7,29 +7,106 @@ from mysql.connector import connect, Error
 import random
 from datetime import datetime, timedelta
 
-# This is the main DatabaseManager class that will be imported by the application
-class DatabaseManager:
+
+class DatabaseBase:
+    """
+    Base class for database operations with common connection and query functionality.
+    """
+    def __init__(self, debug_mode=False):
+        """Initialize the base database class"""
+        self.debug_mode = debug_mode
+        
+        # Common server configuration
+        self.server_config = {
+            'server1': {
+                'host': 'localhost',
+                'user': 'root',
+                'password': 'root'
+            },
+            'server2': {
+                'host': 'localhost',
+                'user': 'root',
+                'password': 'root'
+            }
+        }
+    
+    def create_connection(self, host, user, password, database=None):
+        """Create a connection to the MySQL server"""
+        try:
+            connection_config = {
+                'host': host,
+                'user': user,
+                'password': password
+            }
+            
+            if database:
+                connection_config['database'] = database
+                
+            connection = connect(**connection_config)
+            
+            if self.debug_mode:
+                print(f"Connected to MySQL Server: {host}" + 
+                      (f", Database: {database}" if database else ""))
+            return connection
+        except Error as e:
+            if self.debug_mode:
+                print(f"Error connecting to MySQL Server: {host}" + 
+                      (f", Database: {database}" if database else "") + 
+                      f", Error: {e}")
+            return None
+    
+    def execute_query(self, connection, query, params=None):
+        """Execute a query on the MySQL server"""
+        cursor = connection.cursor()
+        try:
+            if params:
+                # Convert 'None' strings to None type for SQL NULL
+                if isinstance(params, list):
+                    processed_params = [None if param == 'None' or param == '' else param for param in params]
+                    cursor.execute(query, processed_params)
+                else:
+                    cursor.execute(query, params)
+            else:
+                cursor.execute(query)
+                
+            # Handle different query types
+            if query.strip().upper().startswith(('INSERT', 'UPDATE', 'DELETE')):
+                connection.commit()
+                last_id = cursor.lastrowid
+                if self.debug_mode:
+                    print(f"Query executed successfully. Last inserted ID: {last_id}")
+                return last_id
+            elif query.strip().upper().startswith('SELECT'):
+                results = cursor.fetchall()
+                if self.debug_mode:
+                    print(f"Query returned {len(results)} rows")
+                    if len(results) == 0:
+                        print("WARNING: Query returned no results.")
+                return results
+            else:
+                connection.commit()
+                if self.debug_mode:
+                    print("Query executed successfully")
+                return True
+        except Error as e:
+            if self.debug_mode:
+                print(f"Error executing query: {e}")
+                print(f"Query: {query}")
+                if params:
+                    print(f"Parameters: {params}")
+            return None
+        finally:
+            cursor.close()
+
+
+class DatabaseManager(DatabaseBase):
     """
     Manages database connections and query execution across multiple databases
     distributed across two servers.
     """
     def __init__(self, debug_mode=False):
         """Initialize the database manager with server and database configurations"""
-        self.debug_mode = debug_mode
-        
-        # Define the two servers
-        self.servers = {
-            'server1': {
-                'host': 'localhost',  # Using localhost for testing
-                'user': 'root',
-                'password': 'root'
-            },
-            'server2': {
-                'host': 'localhost',  # Using localhost for testing
-                'user': 'root',
-                'password': 'root'
-            }
-        }
+        super().__init__(debug_mode)
         
         # Database distribution across servers
         self.db_server_map = {
@@ -54,7 +131,7 @@ class DatabaseManager:
                 'database': 'medical_db'
             }
         }
-        
+    
     def _get_connection(self, db_name):
         """Get a database connection for the specified database"""
         try:
@@ -66,23 +143,22 @@ class DatabaseManager:
                 return None
                 
             # Get server configuration
-            server_config = self.servers.get(server_name)
+            server_config = self.server_config.get(server_name)
             if not server_config:
                 if self.debug_mode:
                     print(f"Error: Server configuration not found for {server_name}")
                 return None
                 
-            # Combine server config with database config
-            connection_config = {**server_config, **self.config[db_name]}
+            # Get connection parameters
+            host = server_config['host']
+            user = server_config['user']
+            password = server_config['password']
             
-            # Connect to the database on the assigned server
-            if self.debug_mode:
-                print(f"Connecting to {db_name} on {server_name}")
-                
-            return connect(**connection_config)
+            # Create connection with database
+            return self.create_connection(host, user, password, db_name)
         except Error as e:
             if self.debug_mode:
-                print(f"Error connecting to {db_name} on {server_name}: {e}")
+                print(f"Error connecting to {db_name}: {e}")
             return None
 
     def execute_query(self, db_name, query, params=None):
@@ -93,117 +169,42 @@ class DatabaseManager:
                 print(f"Failed to get connection for {db_name}. Cannot execute query.")
             return None
         
-        cursor = None
         try:
-            cursor = conn.cursor()
-            
             if self.debug_mode:
                 print(f"Executing query on {db_name}: {query[:100]}{'...' if len(query) > 100 else ''}")
                 if params:
                     print(f"With parameters: {params}")
             
-            if params:
-                # Convert 'None' strings to None type for SQL NULL
-                processed_params = [None if param == 'None' or param == '' else param for param in params]
-                cursor.execute(query, processed_params)
-            else:
-                cursor.execute(query)
-            
-            if query.strip().upper().startswith(('INSERT', 'UPDATE', 'DELETE')):
-                conn.commit()
-                last_id = cursor.lastrowid
-                if self.debug_mode:
-                    print(f"Query executed successfully. Last inserted ID: {last_id}")
-                return last_id
-            else:
-                results = cursor.fetchall()
-                if self.debug_mode:
-                    print(f"Query returned {len(results)} rows")
-                    if len(results) == 0:
-                        print("WARNING: Query returned no results.")
-                return results
-        except Error as e:
-            if self.debug_mode:
-                server_name = self.db_server_map.get(db_name, 'unknown')
-                print(f"Error executing query on {db_name} (server: {server_name}): {e}")
-            return None
+            result = super().execute_query(conn, query, params)
+            return result
         finally:
-            if cursor:
-                cursor.close()
-            if conn:
-                conn.close()
+            conn.close()
 
 
-class DatabaseSetup:
+class DatabaseSetup(DatabaseBase):
     """
     Handles database setup operations including creating databases,
     tables, and sample data.
     """
     def __init__(self, debug_mode=False):
         """Initialize the database setup with server configurations"""
-        self.debug_mode = debug_mode
+        super().__init__(debug_mode)
         
-        # Server configurations
+        # Database distribution across servers
         self.servers = {
             'server1': {
-                'host': 'localhost',
-                'user': 'root',
-                'password': 'root',
+                'host': self.server_config['server1']['host'],
+                'user': self.server_config['server1']['user'],
+                'password': self.server_config['server1']['password'],
                 'databases': ['patients_db', 'medical_db']
             },
             'server2': {
-                'host': 'localhost',
-                'user': 'root',
-                'password': 'root',
+                'host': self.server_config['server2']['host'],
+                'user': self.server_config['server2']['user'],
+                'password': self.server_config['server2']['password'],
                 'databases': ['appointments_db', 'billing_db']
             }
         }
-    
-    def create_connection(self, host, user, password, database=None):
-        """Create a connection to the MySQL server"""
-        try:
-            if database:
-                connection = connect(
-                    host=host,
-                    user=user,
-                    password=password,
-                    database=database
-                )
-            else:
-                connection = connect(
-                    host=host,
-                    user=user,
-                    password=password
-                )
-            if self.debug_mode:
-                print(f"Connected to MySQL Server: {host}" + 
-                      (f", Database: {database}" if database else ""))
-            return connection
-        except Error as e:
-            if self.debug_mode:
-                print(f"Error connecting to MySQL Server: {host}" + 
-                      (f", Database: {database}" if database else "") + 
-                      f", Error: {e}")
-            return None
-
-    def execute_query(self, connection, query, params=None):
-        """Execute a query on the MySQL server"""
-        cursor = connection.cursor()
-        try:
-            if params:
-                cursor.execute(query, params)
-            else:
-                cursor.execute(query)
-            connection.commit()
-            if self.debug_mode:
-                print("Query executed successfully")
-            return cursor.lastrowid if cursor.lastrowid else True
-        except Error as e:
-            if self.debug_mode:
-                print(f"Error executing query: {e}")
-            return None
-        finally:
-            cursor.close()
 
     def setup_database(self):
         """Set up all databases and tables"""

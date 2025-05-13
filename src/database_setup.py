@@ -5,6 +5,11 @@ This module provides functions for setting up and initializing the database.
 """
 
 import argparse
+import sys
+import os
+
+# Add the parent directory to the path so we can import the models module
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.models.database_utils import DatabaseSetup, initialize_database
 
 

@@ -6,7 +6,7 @@ tkinter>=8.6.0  # Usually comes with Python
 Pillow>=9.5.0  # For image handling
 
 # Database libraries
-mysql-connector-python>=8.0.33
+psycopg2>=2.9.6  # PostgreSQL connector
 SQLAlchemy>=2.0.15  # SQL toolkit and ORM
 
 # Date and time handling

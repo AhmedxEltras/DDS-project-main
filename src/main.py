@@ -301,7 +301,12 @@ def main():
         pass  # Icon not found, use default
     
     # Configure window
-    root.state('zoomed')  # Start maximized
+    # Use cross-platform approach to maximize window
+    root.attributes('-zoomed', True)  # For Linux/Unix
+    # Alternative approach if the above doesn't work on some systems
+    width = root.winfo_screenwidth()
+    height = root.winfo_screenheight()
+    root.geometry(f"{width}x{height}+0+0")
     root.minsize(1024, 768)  # Minimum window size
     
     # Configure grid

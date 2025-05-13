@@ -3,7 +3,9 @@ Database Utilities for Hospital Management System
 Provides database setup, connection management, and sample data generation.
 """
 
-from mysql.connector import connect, Error
+import psycopg2
+from psycopg2 import Error
+import os
 import random
 from datetime import datetime, timedelta
 
@@ -16,41 +18,50 @@ class DatabaseBase:
         """Initialize the base database class"""
         self.debug_mode = debug_mode
         
-        # Common server configuration
+        # PostgreSQL server configurations
         self.server_config = {
             'server1': {
                 'host': 'localhost',
-                'user': 'root',
-                'password': 'root'
+                'user': 'user1',
+                'password': 'pass1',
+                'port': 5433
             },
             'server2': {
                 'host': 'localhost',
-                'user': 'root',
-                'password': 'root'
+                'user': 'user2',
+                'password': 'pass2',
+                'port': 5434
+            },
+            'server3': {
+                'host': 'localhost',
+                'user': 'user3',
+                'password': 'pass3',
+                'port': 5435
             }
         }
     
-    def create_connection(self, host, user, password, database=None):
-        """Create a connection to the MySQL server"""
+    def create_connection(self, host, user, password, port, database=None):
+        """Create a connection to the PostgreSQL server"""
         try:
             connection_config = {
                 'host': host,
                 'user': user,
-                'password': password
+                'password': password,
+                'port': port
             }
             
             if database:
                 connection_config['database'] = database
                 
-            connection = connect(**connection_config)
+            connection = psycopg2.connect(**connection_config)
             
             if self.debug_mode:
-                print(f"Connected to MySQL Server: {host}" + 
+                print(f"Connected to PostgreSQL Server: {host}:{port}" + 
                       (f", Database: {database}" if database else ""))
             return connection
         except Error as e:
             if self.debug_mode:
-                print(f"Error connecting to MySQL Server: {host}" + 
+                print(f"Error connecting to PostgreSQL Server: {host}:{port}" + 
                       (f", Database: {database}" if database else "") + 
                       f", Error: {e}")
             return None
@@ -110,17 +121,19 @@ class DatabaseManager(DatabaseBase):
         
         # Database distribution across servers
         self.db_server_map = {
-            'patients_db': 'server1',     # Patients DB on Server 1
-            'medical_db': 'server1',      # Medical DB on Server 1
-            'appointments_db': 'server2', # Appointments DB on Server 2
-            'billing_db': 'server2'       # Billing DB on Server 2
+            'appointments_db': 'server1',  # Appointments DB on Server 1 (port 5433)
+            'billing_db': 'server1',      # Billing DB on Server 1 (port 5433)
+            'medical_db': 'server2',      # Medical DB on Server 2 (port 5434)
+            'patients_db': 'server2',     # Patients DB on Server 2 (port 5434)
+            # Server 3 will be used as backup
+            'appointments_backup_db': 'server3',  # Backup for appointments
+            'billing_backup_db': 'server3',      # Backup for billing
+            'medical_backup_db': 'server3',      # Backup for medical records
+            'patients_backup_db': 'server3'      # Backup for patients
         }
         
         # Database configurations
         self.config = {
-            'patients_db': {
-                'database': 'patients_db'
-            },
             'appointments_db': {
                 'database': 'appointments_db'
             },
@@ -129,6 +142,22 @@ class DatabaseManager(DatabaseBase):
             },
             'medical_db': {
                 'database': 'medical_db'
+            },
+            'patients_db': {
+                'database': 'patients_db'
+            },
+            # Backup databases
+            'appointments_backup_db': {
+                'database': 'appointments_backup_db'
+            },
+            'billing_backup_db': {
+                'database': 'billing_backup_db'
+            },
+            'medical_backup_db': {
+                'database': 'medical_backup_db'
+            },
+            'patients_backup_db': {
+                'database': 'patients_backup_db'
             }
         }
     
@@ -153,15 +182,16 @@ class DatabaseManager(DatabaseBase):
             host = server_config['host']
             user = server_config['user']
             password = server_config['password']
+            port = server_config['port']
             
             # Create connection with database
-            return self.create_connection(host, user, password, db_name)
+            return self.create_connection(host, user, password, port, db_name)
         except Error as e:
             if self.debug_mode:
                 print(f"Error connecting to {db_name}: {e}")
             return None
 
-    def execute_query(self, db_name, query, params=None):
+    def execute_query(self, db_name, query, params=None, sync_to_backup=True):
         """Execute a query on the specified database"""
         conn = self._get_connection(db_name)
         if not conn:
@@ -176,9 +206,44 @@ class DatabaseManager(DatabaseBase):
                     print(f"With parameters: {params}")
             
             result = super().execute_query(conn, query, params)
+            
+            # If this is a write operation and backup sync is enabled, replicate to backup
+            if sync_to_backup and query.strip().upper().startswith(('INSERT', 'UPDATE', 'DELETE')) and not db_name.endswith('_backup_db'):
+                self.sync_to_backup(db_name, query, params)
+                
             return result
         finally:
             conn.close()
+            
+    def sync_to_backup(self, primary_db, query, params=None):
+        """Synchronize a write operation to the backup database"""
+        # Map primary database to its backup
+        backup_map = {
+            'appointments_db': 'appointments_backup_db',
+            'billing_db': 'billing_backup_db',
+            'medical_db': 'medical_backup_db',
+            'patients_db': 'patients_backup_db'
+        }
+        
+        backup_db = backup_map.get(primary_db)
+        if not backup_db:
+            if self.debug_mode:
+                print(f"No backup database configured for {primary_db}")
+            return
+        
+        # Execute the same query on the backup database
+        try:
+            if self.debug_mode:
+                print(f"Synchronizing operation to backup database {backup_db}")
+                
+            self.execute_query(backup_db, query, params, sync_to_backup=False)  # Prevent infinite recursion
+            
+            if self.debug_mode:
+                print(f"Successfully synchronized to {backup_db}")
+        except Exception as e:
+            if self.debug_mode:
+                print(f"Error synchronizing to backup database {backup_db}: {e}")
+
 
 
 class DatabaseSetup(DatabaseBase):
@@ -196,97 +261,175 @@ class DatabaseSetup(DatabaseBase):
                 'host': self.server_config['server1']['host'],
                 'user': self.server_config['server1']['user'],
                 'password': self.server_config['server1']['password'],
-                'databases': ['patients_db', 'medical_db']
+                'port': self.server_config['server1']['port'],
+                'databases': ['appointments_db', 'billing_db']
             },
             'server2': {
                 'host': self.server_config['server2']['host'],
                 'user': self.server_config['server2']['user'],
                 'password': self.server_config['server2']['password'],
-                'databases': ['appointments_db', 'billing_db']
+                'port': self.server_config['server2']['port'],
+                'databases': ['medical_db', 'patients_db']
+            },
+            'server3': {
+                'host': self.server_config['server3']['host'],
+                'user': self.server_config['server3']['user'],
+                'password': self.server_config['server3']['password'],
+                'port': self.server_config['server3']['port'],
+                'databases': ['appointments_backup_db', 'billing_backup_db', 'medical_backup_db', 'patients_backup_db']
             }
         }
 
+    def setup_databases(self):
+        """Create the databases on each server"""
+        for server_name, server_info in self.servers.items():
+            # Connect to the server without specifying a database
+            # For PostgreSQL, connect to the 'postgres' default database
+            try:
+                conn = self.create_connection(
+                    server_info['host'],
+                    server_info['user'],
+                    server_info['password'],
+                    server_info['port'],
+                    'postgres'  # Connect to default PostgreSQL database
+                )
+                
+                if not conn:
+                    if self.debug_mode:
+                        print(f"Failed to connect to server {server_name}. Skipping database creation.")
+                    continue
+                    
+                # Create each database assigned to this server
+                for db_name in server_info['databases']:
+                    try:
+                        # In PostgreSQL, we need to commit after each transaction
+                        conn.autocommit = True
+                        cursor = conn.cursor()
+                        
+                        # Check if database exists in PostgreSQL
+                        cursor.execute("SELECT 1 FROM pg_database WHERE datname = %s", (db_name,))
+                        result = cursor.fetchone()
+                        
+                        if not result:
+                            # Create the database in PostgreSQL
+                            cursor.execute(f"CREATE DATABASE {db_name}")
+                            if self.debug_mode:
+                                print(f"Created database {db_name} on server {server_name}")
+                        else:
+                            if self.debug_mode:
+                                print(f"Database {db_name} already exists on server {server_name}")
+                    except Error as e:
+                        if self.debug_mode:
+                            print(f"Error creating database {db_name} on server {server_name}: {e}")
+                    finally:
+                        cursor.close()
+                
+                conn.close()
+            except Error as e:
+                if self.debug_mode:
+                    print(f"Error connecting to server {server_name}: {e}")
+
+    def setup_backup_db(self, connection, source_db_name):
+        """Set up a backup database with the same structure as the source database"""
+        if source_db_name == 'patients_db':
+            self.setup_patients_db(connection)
+        elif source_db_name == 'medical_db':
+            self.setup_medical_db(connection)
+        elif source_db_name == 'appointments_db':
+            self.setup_appointments_db(connection)
+        elif source_db_name == 'billing_db':
+            self.setup_billing_db(connection)
+        else:
+            if self.debug_mode:
+                print(f"Unknown database type: {source_db_name}")
+    
     def setup_database(self):
         """Set up all databases and tables"""
-        # Set up Server 1
+        # First create all database files
+        self.setup_databases()
+        
+        # Set up Server 1 - Appointments and Billing
         if self.debug_mode:
-            print("\n=== Setting up Server 1 ===")
+            print("\n=== Setting up Server 1 (Appointments and Billing) ===")
         
-        server1_conn = self.create_connection(
-            self.servers['server1']['host'], 
-            self.servers['server1']['user'], 
-            self.servers['server1']['password']
-        )
-        
-        if server1_conn:
-            # Create databases on Server 1
-            for db in self.servers['server1']['databases']:
-                if self.debug_mode:
-                    print(f"\nCreating database: {db}")
-                
-                self.execute_query(server1_conn, f"CREATE DATABASE IF NOT EXISTS {db}")
-                
-                # Connect to the specific database
-                db_conn = self.create_connection(
-                    self.servers['server1']['host'],
-                    self.servers['server1']['user'],
-                    self.servers['server1']['password'],
-                    db
-                )
-                
-                if db_conn:
-                    # Set up database structure based on database name
-                    if self.debug_mode:
-                        print(f"Setting up {db} structure")
-                    
-                    if db == 'patients_db':
-                        self.setup_patients_db(db_conn)
-                    elif db == 'medical_db':
-                        self.setup_medical_db(db_conn)
-                    
-                    db_conn.close()
+        for db in self.servers['server1']['databases']:
+            # Connect to the specific database
+            db_conn = self.create_connection(
+                self.servers['server1']['host'],
+                self.servers['server1']['user'],
+                self.servers['server1']['password'],
+                self.servers['server1']['port'],
+                db
+            )
             
-            server1_conn.close()
+            if db_conn:
+                # Set up database structure based on database name
+                if self.debug_mode:
+                    print(f"Setting up {db} structure")
+                
+                if db == 'appointments_db':
+                    self.setup_appointments_db(db_conn)
+                elif db == 'billing_db':
+                    self.setup_billing_db(db_conn)
+                
+                db_conn.close()
         
-        # Set up Server 2
+        # Set up Server 2 - Medical and Patients
         if self.debug_mode:
-            print("\n=== Setting up Server 2 ===")
+            print("\n=== Setting up Server 2 (Medical and Patients) ===")
         
-        server2_conn = self.create_connection(
-            self.servers['server2']['host'], 
-            self.servers['server2']['user'], 
-            self.servers['server2']['password']
-        )
-        
-        if server2_conn:
-            # Create databases on Server 2
-            for db in self.servers['server2']['databases']:
-                if self.debug_mode:
-                    print(f"\nCreating database: {db}")
-                
-                self.execute_query(server2_conn, f"CREATE DATABASE IF NOT EXISTS {db}")
-                
-                # Connect to the specific database
-                db_conn = self.create_connection(
-                    self.servers['server2']['host'],
-                    self.servers['server2']['user'],
-                    self.servers['server2']['password'],
-                    db
-                )
-                
-                if db_conn:
-                    # Set up database structure based on database name
-                    if self.debug_mode:
-                        print(f"Setting up {db} structure")
-                    
-                    if db == 'appointments_db':
-                        self.setup_appointments_db(db_conn)
-                    elif db == 'billing_db':
-                        self.setup_billing_db(db_conn)
-                    
-                    db_conn.close()
+        for db in self.servers['server2']['databases']:
+            # Connect to the specific database
+            db_conn = self.create_connection(
+                self.servers['server2']['host'],
+                self.servers['server2']['user'],
+                self.servers['server2']['password'],
+                self.servers['server2']['port'],
+                db
+            )
             
-            server2_conn.close()
+            if db_conn:
+                # Set up database structure based on database name
+                if self.debug_mode:
+                    print(f"Setting up {db} structure")
+                
+                if db == 'medical_db':
+                    self.setup_medical_db(db_conn)
+                elif db == 'patients_db':
+                    self.setup_patients_db(db_conn)
+                
+                db_conn.close()
+        
+        # Set up Server 3 - Backup Server
+        if self.debug_mode:
+            print("\n=== Setting up Server 3 (Backup Server) ===")
+        
+        backup_mapping = {
+            'appointments_backup_db': 'appointments_db',
+            'billing_backup_db': 'billing_db',
+            'medical_backup_db': 'medical_db',
+            'patients_backup_db': 'patients_db'
+        }
+        
+        for backup_db, source_db in backup_mapping.items():
+            # Connect to the specific backup database
+            db_conn = self.create_connection(
+                self.servers['server3']['host'],
+                self.servers['server3']['user'],
+                self.servers['server3']['password'],
+                self.servers['server3']['port'],
+                backup_db
+            )
+            
+            if db_conn:
+                # Set up database structure based on source database
+                if self.debug_mode:
+                    print(f"Setting up {backup_db} structure (mirroring {source_db})")
+                
+                # Set up the backup database with the same structure as the source
+                self.setup_backup_db(db_conn, source_db)
+                
+                db_conn.close()
         
         if self.debug_mode:
             print("\n=== Database setup completed ===")
@@ -296,7 +439,7 @@ class DatabaseSetup(DatabaseBase):
         # Create patients table
         query = """
         CREATE TABLE IF NOT EXISTS patients (
-            patient_id INT AUTO_INCREMENT PRIMARY KEY,
+            patient_id SERIAL PRIMARY KEY,
             first_name VARCHAR(50) NOT NULL,
             last_name VARCHAR(50) NOT NULL,
             date_of_birth DATE NOT NULL,
@@ -305,7 +448,7 @@ class DatabaseSetup(DatabaseBase):
             phone VARCHAR(20),
             email VARCHAR(100),
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """
         return self.execute_query(connection, query)
@@ -315,15 +458,15 @@ class DatabaseSetup(DatabaseBase):
         # Create medical_records table
         query = """
         CREATE TABLE IF NOT EXISTS medical_records (
-            record_id INT AUTO_INCREMENT PRIMARY KEY,
-            patient_id INT NOT NULL,
+            record_id SERIAL PRIMARY KEY,
+            patient_id INTEGER NOT NULL,
             diagnosis TEXT,
             treatment TEXT,
             notes TEXT,
             record_date DATE NOT NULL,
-            doctor_id INT,
+            doctor_id INTEGER,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """
         return self.execute_query(connection, query)
@@ -333,14 +476,14 @@ class DatabaseSetup(DatabaseBase):
         # Create doctors table
         doctors_query = """
         CREATE TABLE IF NOT EXISTS doctors (
-            doctor_id INT AUTO_INCREMENT PRIMARY KEY,
+            doctor_id SERIAL PRIMARY KEY,
             first_name VARCHAR(50) NOT NULL,
             last_name VARCHAR(50) NOT NULL,
             specialization VARCHAR(100),
             phone VARCHAR(20),
             email VARCHAR(100),
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """
         if not self.execute_query(connection, doctors_query):
@@ -349,15 +492,15 @@ class DatabaseSetup(DatabaseBase):
         # Create appointments table
         appointments_query = """
         CREATE TABLE IF NOT EXISTS appointments (
-            appointment_id INT AUTO_INCREMENT PRIMARY KEY,
-            patient_id INT NOT NULL,
-            doctor_id INT NOT NULL,
+            appointment_id SERIAL PRIMARY KEY,
+            patient_id INTEGER NOT NULL,
+            doctor_id INTEGER NOT NULL,
             appointment_date DATE NOT NULL,
             appointment_time TIME NOT NULL,
             status VARCHAR(20) DEFAULT 'Scheduled',
             notes TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """
         return self.execute_query(connection, appointments_query)
@@ -367,16 +510,16 @@ class DatabaseSetup(DatabaseBase):
         # Create invoices table
         query = """
         CREATE TABLE IF NOT EXISTS invoices (
-            invoice_id INT AUTO_INCREMENT PRIMARY KEY,
-            patient_id INT NOT NULL,
-            appointment_id INT,
+            invoice_id SERIAL PRIMARY KEY,
+            patient_id INTEGER NOT NULL,
+            appointment_id INTEGER,
             amount DECIMAL(10, 2) NOT NULL,
             payment_status VARCHAR(20) DEFAULT 'Pending',
             issue_date DATE NOT NULL,
             due_date DATE NOT NULL,
             payment_date DATE,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """
         return self.execute_query(connection, query)
@@ -534,7 +677,7 @@ class DatabaseSetup(DatabaseBase):
         for invoice in invoices:
             invoice_id = db_manager.execute_query('billing_db', query, invoice)
             if invoice_id and self.debug_mode:
-                print(f"Added invoice: Patient {invoice[0]}, Amount: ${invoice[2]}, ID: {invoice_id}")
+                print(f"Added invoice: ID: {invoice_id}, Amount: ${invoice[2]}, Status: {invoice[3]}")
 
     def insert_sample_medical_records(self, db_manager, patient_ids, doctor_ids):
         """Insert sample medical records into the medical database"""
